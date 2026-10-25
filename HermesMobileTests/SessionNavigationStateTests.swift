@@ -1175,3 +1175,91 @@ private final class WindowReportingView: UIView {
         onWindowChange(window != nil)
     }
 }
+
+@MainActor
+final class HermesHomeSwitchTests: XCTestCase {
+    func testBothLabelsFitInTheToolbarAcrossWidthsAndTextSizes() async throws {
+        for width in [320.0, 393.0, 768.0] {
+            for size in [ContentSizeCategory.large, .extraExtraExtraLarge, .accessibilityExtraExtraExtraLarge] {
+                try await withSwitch(width: width, textSize: size) { control, host in
+                    let labels = self.descendants(control).compactMap { $0 as? UILabel }
+                        .filter { $0.text == "Bots" || $0.text == "Sessions" }
+                    XCTAssertEqual(Set(labels.compactMap(\.text)), ["Bots", "Sessions"])
+                    for label in labels {
+                        XCTAssertGreaterThanOrEqual(label.bounds.width + 1, label.intrinsicContentSize.width,
+                            "The full label must fit at width \(width), text size \(size)")
+                        var segment: UIView = label
+                        while let parent = segment.superview, parent !== control { segment = parent }
+                        XCTAssertGreaterThanOrEqual(segment.bounds.width - label.intrinsicContentSize.width, 24,
+                            "Each label needs breathing room inside its native segment")
+                        let frame = label.convert(label.bounds, to: host.view)
+                        XCTAssertGreaterThanOrEqual(frame.minX, 0)
+                        XCTAssertLessThanOrEqual(frame.maxX, host.view.bounds.width)
+                    }
+                    let ordered = labels.sorted { $0.convert($0.bounds, to: control).minX < $1.convert($1.bounds, to: control).minX }
+                    if ordered.count == 2 {
+                        XCTAssertLessThanOrEqual(ordered[0].convert(ordered[0].bounds, to: control).maxX,
+                                                 ordered[1].convert(ordered[1].bounds, to: control).minX)
+                    }
+                    let frame = control.convert(control.bounds, to: host.view)
+                    XCTAssertGreaterThanOrEqual(frame.minX, 0)
+                    XCTAssertLessThanOrEqual(frame.maxX, host.view.bounds.width)
+                }
+            }
+        }
+    }
+
+    func testSelectingEitherNativeSegmentChangesTheHomeTab() async throws {
+        var selected = HermesHomeTab.sessions
+        try await withSwitch(selection: Binding(get: { selected }, set: { selected = $0 })) { control, _ in
+            XCTAssertEqual(control.selectedSegmentIndex, 1)
+            control.selectedSegmentIndex = 0
+            control.sendActions(for: .valueChanged)
+            XCTAssertEqual(selected, .bots)
+            control.selectedSegmentIndex = 1
+            control.sendActions(for: .valueChanged)
+            XCTAssertEqual(selected, .sessions)
+        }
+    }
+
+    private func withSwitch(width: CGFloat = 393, textSize: ContentSizeCategory = .large,
+                            selection: Binding<HermesHomeTab> = .constant(.sessions),
+                            check: (UISegmentedControl, UIViewController) throws -> Void) async throws {
+        let appeared = expectation(description: "Home toolbar appeared")
+        let avatar = SessionsHeader.Avatar(initials: "QA", color: .blue, foreground: .white,
+            servers: .init(servers: [], activeServerID: nil), openSettings: {},
+            switchToServer: { _ in }, addServer: {}, manageServers: {})
+        let home = HermesHome(title: "Test", avatar: avatar, tab: selection)
+        let host = HermesSwitchTestHost(rootView: NavigationStack {
+            Color.clear.modifier(HermesHomeChrome(home: home,
+                filter: { Button("Filter", systemImage: "line.3.horizontal.decrease") {}.labelStyle(.iconOnly) },
+                newChat: { Button("New chat", systemImage: "square.and.pencil") {}.labelStyle(.iconOnly) }))
+        }.environment(\.sizeCategory, textSize))
+        host.appeared = { appeared.fulfill() }
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: width, height: 844)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil }
+        await fulfillment(of: [appeared], timeout: 5)
+        host.view.layoutIfNeeded()
+        XCTAssertEqual(host.view.bounds.width, width, accuracy: 1, "The test must render at the requested width")
+        let control = try XCTUnwrap(descendants(host.view).compactMap { $0 as? UISegmentedControl }.first)
+        try check(control, host)
+    }
+
+    private func descendants(_ view: UIView) -> [UIView] {
+        [view] + view.subviews.flatMap(descendants)
+    }
+}
+
+@MainActor
+private final class HermesSwitchTestHost<Content: View>: UIHostingController<Content> {
+    var appeared: () -> Void = {}
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        appeared()
+    }
+}

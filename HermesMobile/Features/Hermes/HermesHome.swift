@@ -62,38 +62,19 @@ private struct HermesHomeSwitch: View {
     @Binding var tab: HermesHomeTab
 
     var body: some View {
-        NativeHermesHomeSwitch(tab: $tab)
-            .frame(width: 200, height: 36)
-            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-            .accessibilityShowsLargeContentViewer()
-    }
-}
-
-private struct NativeHermesHomeSwitch: UIViewRepresentable {
-    @Binding var tab: HermesHomeTab
-
-    func makeUIView(context: Context) -> UISegmentedControl {
-        let control = UISegmentedControl(items: [String(localized: "Bots"), String(localized: "Sessions")])
-        control.apportionsSegmentWidthsByContent = false
-        control.addTarget(context.coordinator, action: #selector(Coordinator.selectTab(_:)), for: .valueChanged)
-        return control
-    }
-
-    func updateUIView(_ control: UISegmentedControl, context: Context) {
-        context.coordinator.tab = $tab
-        control.selectedSegmentIndex = tab == .bots ? 0 : 1
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator(tab: $tab) }
-
-    @MainActor
-    final class Coordinator: NSObject {
-        var tab: Binding<HermesHomeTab>
-
-        init(tab: Binding<HermesHomeTab>) { self.tab = tab }
-
-        @objc func selectTab(_ control: UISegmentedControl) {
-            tab.wrappedValue = control.selectedSegmentIndex == 0 ? .bots : .sessions
+        // The segments name themselves; the picker needs no label of its own.
+        Picker(selection: $tab) {
+            Text("Bots").tag(HermesHomeTab.bots)
+            Text("Sessions").tag(HermesHomeTab.sessions)
+        } label: {
+            EmptyView()
         }
+        .pickerStyle(.segmented)
+        // A bare `.fixedSize()` hugs the longer label (#1344); the minimum gives both segments
+        // room, and a longer translation still widens the switch instead of truncating.
+        .frame(minWidth: 200)
+        .fixedSize()
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+        .accessibilityShowsLargeContentViewer()
     }
 }
